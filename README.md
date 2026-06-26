@@ -26,4 +26,4 @@ Os anexos grandes ficam preparados para Google Drive. O modelo de ponte esta em:
 docs/google-drive-apps-script.js
 ```
 
-Depois de publicar essa ponte na outra conta Google, cole a URL dela na constante `DRIVE_UPLOAD_ENDPOINT` dentro de `web/index.html`.
+Depois de publicar essa ponte na outra conta Google, abra a janela `Nuvem` do app e preencha `Drive dos anexos` com o e-mail dessa conta, a URL da ponte e o token. Esse e-mail pode ser diferente do e-mail usado para entrar no QUAAADRO.
