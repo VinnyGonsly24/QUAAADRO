@@ -407,7 +407,7 @@
     homeQuery:'', previewProjectId:null, modal:null, moreOpen:false, trashOpen:false, boardSearchOpen:false, homeMoreOpen:false, projectTrashOpen:false, homeContext:null,
     selectedIds:[], saveState:'Salvo', undo:[], redo:[], context:null,
     dragCardId:null, fileDropPosition:null, pendingFileType:null, pendingBoardImageId:null,
-    lastFileDropSignature:'', lastFileDropAt:0, nodePointerDragging:false, connectingFromId:null,
+    lastFileDropSignature:'', lastFileDropAt:0, nodePointerDragging:false, dragToolType:null, connectingFromId:null,
     viewport:{x:0,y:0,zoom:1}, spaceDown:false, panning:false
   };
 
@@ -683,7 +683,17 @@
     const morePop=$('.more-pop'),moreButton=$('#moreBtn'),side=$('.sidebar');if(morePop&&moreButton&&side){morePop.style.left=(side.offsetLeft+side.offsetWidth+8)+'px';morePop.style.top=(side.offsetTop+moreButton.offsetTop)+'px';}
     $('#trashBtn')?.addEventListener('click',()=>{state.trashOpen=!state.trashOpen;render()});$('#closeTrash')?.addEventListener('click',()=>{state.trashOpen=false;render()});
     $$('.tool[data-tool],.more-pop [data-tool]').forEach(el=>{
-      el.addEventListener('dragstart',e=>{e.dataTransfer.setData('application/quaaadro-tool',el.dataset.tool);e.dataTransfer.effectAllowed='copy'});
+      el.addEventListener('dragstart',e=>{
+        state.dragToolType=el.dataset.tool;
+        e.dataTransfer.setData('application/quaaadro-tool',state.dragToolType);
+        e.dataTransfer.setData('text/plain',`quaaadro-tool:${state.dragToolType}`);
+        e.dataTransfer.effectAllowed='copy';
+      });
+      el.addEventListener('dragend',()=>{state.dragToolType=null});
+      el.addEventListener('click',()=>{
+        const rect=canvas.getBoundingClientRect();
+        addToolElement(el.dataset.tool,screenToWorld(rect.left+rect.width/2,rect.top+rect.height/2));
+      });
     });
     canvas.addEventListener('dragover',e=>{e.preventDefault();e.dataTransfer.dropEffect='copy'});
     canvas.addEventListener('drop',handleCanvasDrop);
@@ -709,7 +719,7 @@
   function bindViewportControls(){const bindThumb=(axis,trackId,thumbId)=>{const track=$(trackId),thumb=$(thumbId);if(!track||!thumb)return;thumb.addEventListener('pointerdown',e=>{e.preventDefault();e.stopPropagation();thumb.setPointerCapture?.(e.pointerId);thumb.classList.add('dragging');const metrics=viewportScrollMetrics(),startClient=axis==='x'?e.clientX:e.clientY,startValue=axis==='x'?metrics.left:metrics.top,trackSize=axis==='x'?track.clientWidth:track.clientHeight,thumbSize=axis==='x'?thumb.offsetWidth:thumb.offsetHeight,worldTravel=(axis==='x'?metrics.maxLeft:metrics.maxTop)-VIRTUAL_WORLD_MIN,pixelTravel=Math.max(1,trackSize-thumbSize);const move=ev=>{const delta=(axis==='x'?ev.clientX:ev.clientY)-startClient;setViewportWorldOffset(axis,startValue+delta*worldTravel/pixelTravel)};const up=()=>{thumb.classList.remove('dragging');window.removeEventListener('pointermove',move);window.removeEventListener('pointerup',up);scheduleSave()};window.addEventListener('pointermove',move);window.addEventListener('pointerup',up)});track.addEventListener('pointerdown',e=>{if(e.target===thumb)return;const metrics=viewportScrollMetrics(),rect=track.getBoundingClientRect(),size=axis==='x'?track.clientWidth:track.clientHeight,thumbSize=axis==='x'?thumb.offsetWidth:thumb.offsetHeight,coord=(axis==='x'?e.clientX-rect.left:e.clientY-rect.top)-thumbSize/2,travel=Math.max(1,size-thumbSize),ratio=clampNumber(coord/travel,0,1),max=axis==='x'?metrics.maxLeft:metrics.maxTop;setViewportWorldOffset(axis,VIRTUAL_WORLD_MIN+ratio*(max-VIRTUAL_WORLD_MIN));scheduleSave()})};bindThumb('x','#canvasScrollX','#canvasScrollXThumb');bindThumb('y','#canvasScrollY','#canvasScrollYThumb');$('#zoomOutBtn')?.addEventListener('click',()=>setViewportZoom(state.viewport.zoom-.1,null,null,true));$('#zoomInBtn')?.addEventListener('click',()=>setViewportZoom(state.viewport.zoom+.1,null,null,true));$('#zoomValueBtn')?.addEventListener('click',()=>setViewportZoom(1,null,null,true));$('#zoomRange')?.addEventListener('input',e=>setViewportZoom(Number(e.target.value)/100));$('#zoomRange')?.addEventListener('change',()=>scheduleSave());updateViewportControls()}
   async function handleCanvasDrop(e){
     e.preventDefault();e.stopPropagation();
-    if(state.nodePointerDragging)return;
+    if(state.nodePointerDragging&&!state.dragToolType)return;
     const pos=screenToWorld(e.clientX,e.clientY);
     const files=[...e.dataTransfer.files].filter((file,index,list)=>list.findIndex(item=>item.name===file.name&&item.size===file.size&&item.lastModified===file.lastModified)===index);
     if(files.length){
@@ -719,9 +729,19 @@
       state.lastFileDropSignature=signature;state.lastFileDropAt=dropTime;
       checkpoint();let offset=0;for(const f of files){await addFileElement(f,pos.x+offset,pos.y+offset);offset+=20}touchProject();scheduleSave();render();return
     }
-    const type=e.dataTransfer.getData('application/quaaadro-tool');if(!type)return;
-    if(type==='image'||type==='attachment'){state.fileDropPosition=pos;state.pendingFileType=type;const picker=$('#filePicker');picker.accept=type==='image'?'image/*':'';picker.click();return}
+    const type=draggedToolType(e.dataTransfer);state.dragToolType=null;if(!type)return;
+    if(addToolElement(type,pos))return;
+  }
+  function draggedToolType(dataTransfer){
+    const custom=dataTransfer?.getData('application/quaaadro-tool')||'';
+    const plain=dataTransfer?.getData('text/plain')||'';
+    return custom||(plain.startsWith('quaaadro-tool:')?plain.slice('quaaadro-tool:'.length):'')||state.dragToolType||'';
+  }
+  function addToolElement(type,pos){
+    if(!type||!activeBoard())return false;
+    if(type==='image'||type==='attachment'){state.fileDropPosition=pos;state.pendingFileType=type;const picker=$('#filePicker');picker.accept=type==='image'?'image/*':'';picker.click();return true}
     checkpoint();const el=createElement(type,pos.x,pos.y);if(type==='board'){const p=activeProject(),id=uid();p.boards[id]={id,name:'',parentBoardId:state.activeBoardId,createdAt:now(),updatedAt:now(),viewport:{x:0,y:0,zoom:1},elements:[],connections:[]};el.data.boardId=id;}activeBoard().elements.push(el);touchProject();scheduleSave();render();
+    return true;
   }
   const MAX_ATTACHMENT_SIZE=120*1024*1024;
   async function optimizeImageFile(file,maxDimension=2400){if(!file?.type?.startsWith('image/')||file.type==='image/svg+xml'||file.type==='image/gif')return file;try{const bitmap=await createImageBitmap(file);const scale=Math.min(1,maxDimension/Math.max(bitmap.width,bitmap.height));if(scale===1&&file.size<4*1024*1024){bitmap.close();return file}const canvas=document.createElement('canvas');canvas.width=Math.max(1,Math.round(bitmap.width*scale));canvas.height=Math.max(1,Math.round(bitmap.height*scale));canvas.getContext('2d',{alpha:true}).drawImage(bitmap,0,0,canvas.width,canvas.height);bitmap.close();const blob=await new Promise(resolve=>canvas.toBlob(resolve,'image/webp',.88));return blob&&blob.size<file.size?blob:file}catch(e){console.warn('Imagem mantida sem compactação',e);return file}}
